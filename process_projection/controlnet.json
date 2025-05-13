@@ -1,0 +1,145 @@
+{
+        "input": {
+            "inputs": {
+                "image": "",
+                "upload": "image"
+            },
+            "class_type": "LoadImage"
+        },
+        "rescale": {
+            "inputs": {
+                "upscale_method": "lanczos",
+                "width": 224,
+                "height": 224,
+                "crop": "center",
+                "image": [
+                    "input",
+                    0
+                ]
+            },
+            "class_type": "ImageScale"
+        },
+        "15": {
+            "inputs": {
+                "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+            },
+            "class_type": "CheckpointLoaderSimple"
+        },
+        "prompts": {
+            "inputs": {
+                "text": "",
+                "clip": [
+                    "15",
+                    1
+                ]
+            },
+            "class_type": "CLIPTextEncode"
+        },
+        "21": {
+            "inputs": {
+                "seed": 65,
+                "steps": 25,
+                "cfg": 6,
+                "sampler_name": "euler",
+                "scheduler": "normal",
+                "denoise": 1,
+                "model": [
+                    "15",
+                    0
+                ],
+                "positive": [
+                    "25",
+                    0
+                ],
+                "negative": [
+                    "25",
+                    1
+                ],
+                "latent_image": [
+                    "latentSpace",
+                    0
+                ]
+            },
+            "class_type": "KSampler"
+        },
+        "23": {
+            "inputs": {
+                "samples": [
+                    "21",
+                    0
+                ],
+                "vae": [
+                    "15",
+                    2
+                ]
+            },
+            "class_type": "VAEDecode"
+        },
+        "25": {
+            "inputs": {
+                "strength": 0.9,
+                "start_percent": 0,
+                "end_percent": 1,
+                "positive": [
+                    "prompts",
+                    0
+                ],
+                "negative": [
+                    "35",
+                    0
+                ],
+                "control_net": [
+                    "ControlNetLoader",
+                    0
+                ],
+                "image": [
+                    "rescale",
+                    0
+                ]
+            },
+            "class_type": "ControlNetApplyAdvanced"
+        },
+        "ControlNetLoader": {
+            "inputs": {
+                "control_net_name": "control_v11p_sd15_canny.pth"
+            },
+            "class_type": "ControlNetLoader"
+        },
+        "latentSpace": {
+            "inputs": {
+                "width": 224,
+                "height": 224,
+                "batch_size": 1
+            },
+            "class_type": "EmptyLatentImage"
+        },
+        "33": {
+            "inputs": {
+                "filename_prefix": "ComfyUI",
+                "images": [
+                    "23",
+                    0
+                ]
+            },
+            "class_type": "SaveImage"
+        },
+        "35": {
+            "inputs": {
+                "text": "",
+                "clip": [
+                    "15",
+                    1
+                ]
+            },
+            "class_type": "CLIPTextEncode"
+        },
+        "save_image_websocket_node": {
+            "class_type": "SaveImageWebsocket",
+            "inputs": {
+                "images": [
+                    "23",
+                    0
+                ]
+            }
+        }
+}
