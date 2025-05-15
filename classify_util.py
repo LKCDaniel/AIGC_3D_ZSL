@@ -125,6 +125,10 @@ def render_object_style(rasterizer, renderer, mesh, img_style):
         vertex_normals = mesh.verts_normals_packed()
         vertex_normals_rgb = (vertex_normals + 1) / 2
 
+        # blue is front, red is left, green is top
+        x, y, z = vertex_normals_rgb[:, 0], vertex_normals_rgb[:, 1], vertex_normals_rgb[:, 2]
+        vertex_normals_rgb = torch.stack([x, z, y], dim=1)
+
         face_attributes = vertex_normals_rgb[mesh.faces_packed()]
         normals = pytorch3d.ops.interpolate_face_attributes(
             fragments.pix_to_face, fragments.bary_coords, face_attributes).squeeze()
@@ -135,8 +139,9 @@ def render_object_style(rasterizer, renderer, mesh, img_style):
             normals_rgb = normals_rgb.transpose(1, 2, 0)
 
         mask = (render_mask == 0)
-        mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
-        normals_rgb[mask] = 0
+        normals_rgb[mask, 0] = 0.5
+        normals_rgb[mask, 1] = 0.5
+        normals_rgb[mask, 2] = 1.0
         normals_rgb = np.clip(normals_rgb, 0.0, 1.0)
         return normals_rgb, render_mask
 

@@ -25,7 +25,7 @@
             },
             "class_type": "CheckpointLoaderSimple"
         },
-        "prompts": {
+        "positive_prompt": {
             "inputs": {
                 "text": "",
                 "clip": [
@@ -35,7 +35,7 @@
             },
             "class_type": "CLIPTextEncode"
         },
-        "21": {
+        "KSampler": {
             "inputs": {
                 "seed": 65,
                 "steps": 25,
@@ -65,7 +65,7 @@
         "23": {
             "inputs": {
                 "samples": [
-                    "21",
+                    "KSampler",
                     0
                 ],
                 "vae": [
@@ -81,11 +81,11 @@
                 "start_percent": 0,
                 "end_percent": 1,
                 "positive": [
-                    "prompts",
+                    "positive_prompt",
                     0
                 ],
                 "negative": [
-                    "35",
+                    "negative_prompt",
                     0
                 ],
                 "control_net": [
@@ -123,7 +123,7 @@
             },
             "class_type": "SaveImage"
         },
-        "35": {
+        "negative_prompt": {
             "inputs": {
                 "text": "",
                 "clip": [

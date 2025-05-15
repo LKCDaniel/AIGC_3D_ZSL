@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 
 import websocket
@@ -115,11 +116,12 @@ class Comfyui:
 
         return output_images
 
-    def _create_workflow(self, input_image_filename, prompt, style):
+    def _create_workflow(self, input_image_filename, prompt, negative_prompt, style):
         with open(self.workflow_path, 'r') as f:
             workflow = json.load(f)
         workflow["input"]["inputs"]["image"] = input_image_filename
-        workflow["prompts"]["inputs"]["text"] = prompt
+        workflow["positive_prompt"]["inputs"]["text"] = prompt
+        workflow["negative_prompt"]["inputs"]["text"] = negative_prompt
         workflow["rescale"]["inputs"]["width"] = self.resolution
         workflow["rescale"]["inputs"]["height"] = self.resolution
         workflow["latentSpace"]["inputs"]["width"] = self.resolution
@@ -137,11 +139,12 @@ class Comfyui:
         workflow["ControlNetLoader"]["inputs"]["control_net_name"] = controlnet
         return workflow
 
-    def process_image(self, prompt, style, input_path, output_path):
+    def process_image(self, prompt, style, input_path, output_path, negative_prompt='', seed=None):
         upload_result = self._upload_image(input_path)
         input_image_name = upload_result['name']
 
-        workflow = self._create_workflow(input_image_name, prompt, style)
+        workflow = self._create_workflow(input_image_name, prompt, negative_prompt, style)
+        workflow["KSampler"]["inputs"]["seed"] = seed if seed else time.time()
 
         results = []
         images = self._get_images(workflow)

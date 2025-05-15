@@ -8,6 +8,7 @@ import numpy as np
 from os.path import join, isdir, isfile
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
+from tensorflow.python.ops.math_ops import negative
 
 from process_projection.comfyui import Comfyui
 
@@ -50,7 +51,7 @@ def run(opt, comfyui=None):
     model, preprocess = clip.load(pretrain_model, device=device)  # ViT-B/32
     img_norm = preprocess.transforms[4]
 
-    print(f'prompt: {opt.prompt}, style: {opt.style}, bg_color: {opt.bg_color}, IARM: {opt.iarm}')
+    print(f'prompt: {opt.prompt}, style: {opt.style}, bg_color: {opt.bg_color} IARM: {opt.iarm}')
     if opt.comment:
         print(f'comment: {opt.comment}')
     else:
@@ -60,6 +61,7 @@ def run(opt, comfyui=None):
 
     model = model.to(device)
     label_list = []
+    filename_list = []
     pred_list = []
     probs_list = []
     time_list = []
@@ -69,6 +71,7 @@ def run(opt, comfyui=None):
         start_time = time.time()
         class_name = os.path.basename(f_path).split('_')[0]
         file_name = os.path.basename(f_path).split('.')[0]
+        filename_list.append(file_name)
         cur_label = class_map[class_name]
         label_list.append(cur_label)
 
@@ -82,9 +85,6 @@ def run(opt, comfyui=None):
                                                    img_size=opt.resolution)
         init_image, image_mask = render_object_style(rasterizer, renderer, mesh, opt.style)
 
-        if opt.style == 'normal':
-            init_image[image_mask == 0, :] = torch.tensor([0.5, 0.5, 1], dtype=torch.float32)
-
         projection_path = join(opt.data_dir, 'projections', f'{opt.style}_{opt.resolution}', f'{file_name}.png')
         if not isfile(projection_path):
             os.makedirs(os.path.dirname(projection_path), exist_ok=True)
@@ -94,39 +94,50 @@ def run(opt, comfyui=None):
         torch.no_grad()
         if comfyui:
             processed_projection_dir = join(opt.data_dir, 'processed_projections',
-                                            f'{opt.style}_{opt.resolution}{f'_{opt.aigc_dsc}' if opt.aigc_dsc else ''}',
+                                            f'{opt.style}_{opt.resolution}{f'_{opt.aigc_dsc}' if opt.aigc_dsc else ''}{'_np' if opt.negative_p else ''}',
                                             file_name)
             os.makedirs(processed_projection_dir, exist_ok=True)
 
             probs = []
             for class_name in test_class:
                 processed_image_batch = None
-                for i in range(opt.num_per_input):
-                    projection_processed_path = join(processed_projection_dir, f'{class_name}_{i}.png')
-                    if not isfile(projection_processed_path):
-                        comfyui.process_image(class_name, opt.style, projection_path, projection_processed_path)
+                for bg_color in opt.bg_color:
+                    specific_i = opt.specific_input
+                    if not isinstance(specific_i, list):
+                        specific_i = [specific_i]
+                    for i in specific_i if specific_i else range(opt.num_per_input):
+                        projection_processed_path = join(processed_projection_dir, f'{class_name}_{i}.png')
 
-                    processed_image = torch.from_numpy(plt.imread(projection_processed_path))
+                        n_prompt = ''
+                        if opt.negative_p:
+                            for cl_n in test_class:
+                                n_prompt += cl_n + ","
 
-                    if opt.bg_color == 'white':
-                        processed_image[image_mask == 0, ...] = 1
-                    else:
-                        processed_image[image_mask == 0, ...] = 0
+                        if not isfile(projection_processed_path):
+                            comfyui.process_image(class_name, opt.style, projection_path, projection_processed_path,
+                                                  negative_prompt=n_prompt)
 
-                    masked_proj_path = join(processed_projection_dir, f'{class_name}_{i}_masked.png')
-                    if not isfile(masked_proj_path):
-                        os.makedirs(os.path.dirname(masked_proj_path), exist_ok=True)
-                        plt_image = processed_image.cpu().numpy()
-                        plt.imsave(masked_proj_path, plt_image)
-                        print(f'{opt.style} projection of {file_name} saved to {masked_proj_path}')
-                    # plt.imshow(processed_image)
-                    # plt.show()
+                        processed_image = torch.from_numpy(plt.imread(projection_processed_path))
 
-                    processed_image = img_norm(processed_image.to(device).permute(2, 0, 1)).unsqueeze(0)
-                    if processed_image_batch is None:
-                        processed_image_batch = processed_image
-                    else:
-                        processed_image_batch = torch.cat((processed_image_batch, processed_image), dim=0)
+                        if bg_color == 'white':
+                            processed_image[image_mask == 0, ...] = 1
+                        else:
+                            processed_image[image_mask == 0, ...] = 0
+
+                        masked_proj_path = join(processed_projection_dir, f'{class_name}_{i}_masked.png')
+                        if not isfile(masked_proj_path):
+                            os.makedirs(os.path.dirname(masked_proj_path), exist_ok=True)
+                            plt_image = processed_image.cpu().numpy()
+                            plt.imsave(masked_proj_path, plt_image)
+                            print(f'{opt.style} projection of {file_name} saved to {masked_proj_path}')
+                        # plt.imshow(processed_image)
+                        # plt.show()
+
+                        processed_image = img_norm(processed_image.to(device).permute(2, 0, 1)).unsqueeze(0)
+                        if processed_image_batch is None:
+                            processed_image_batch = processed_image
+                        else:
+                            processed_image_batch = torch.cat((processed_image_batch, processed_image), dim=0)
 
                 if processed_image_batch.shape[2:] != (224, 224):
                     processed_image_batch = torch.nn.functional.interpolate(processed_image_batch, size=(224, 224),
@@ -247,8 +258,8 @@ def run(opt, comfyui=None):
         probs_list.append(probs)
         time_list.append(time.time() - start_time)
 
-        print(f'========complete: {f_i + 1}/{len(test_file_list)} samples, current: {file_name}, label/pred: '
-              f'{cur_label}/{pred_cls}, all acc: {acc}============')
+        print(f'\n{opt.aigc_dsc}{opt.comment}: {f_i + 1}/{len(test_file_list)}, current: {file_name}, label/pred: '
+              f'{cur_label}/{pred_cls}, all acc: {acc}\n')
 
     per_accuracy = class_accuracy(labels=np.array(label_list), predictions=np.array(pred_list), test_class=test_class)
     print('average time for each sample is {}'.format(np.mean(time_list)))
@@ -256,41 +267,72 @@ def run(opt, comfyui=None):
     run_th = -1
     file_list = glob.glob(join(opt.data_dir, 'results', '*'))
     for file in file_list:
+        if os.path.basename(file) == 'plots': continue
         file = os.path.basename(file)
         file_th = int(file.split('_')[0])
         if file_th > run_th:
             run_th = file_th
     run_th += 1
 
-    output_dir = join(opt.data_dir, 'results', f'{run_th}')
-    output_dir += f'_{opt.aigc_dsc}' if opt.aigc_dsc else ''
-    output_dir += f'_{opt.comment}' if opt.comment else ''
+    output_name = f'{run_th}{f'_{opt.aigc_dsc}' if opt.aigc_dsc else ''}{'_np' if opt.negative_p else ''}{f'_{opt.comment}' if opt.comment else ''}'
+    output_dir = join(opt.data_dir, 'results', output_name)
 
     os.makedirs(output_dir, exist_ok=True)
-    np.save(join(output_dir, 'labels.npy'), label_list)
+    np.save(join(output_dir, 'label.npy'), label_list)
     np.save(join(output_dir, 'pred.npy'), pred_list)
     np.save(join(output_dir, 'prob.npy'), probs_list)
 
+    with open(join(output_dir, 'result.txt'), 'w') as f:
+        filename_width = 17
+        label_width = 12
+        tf_width = 6
+        pred_width = 10
+
+        f.write(f"{'file':<{filename_width}}{'prediction':<{label_width}}{'T/F':<{tf_width}}")
+        for class_n in test_class:
+            f.write(f"{class_n:<{pred_width}}  ")
+
+        f.write('\n' + '-' * (filename_width + label_width + 60) + '\n')
+
+        for i, label in enumerate(label_list):
+            f.write(f"{filename_list[i]:<{filename_width}}")
+            f.write(f"{test_class[pred_list[i]]:<{label_width}}")
+            f.write(f"{'T' if label == pred_list[i] else 'F':<{tf_width}}")
+            for j in probs_list[i]:
+                f.write(f"{j:<{pred_width}}  ")
+            f.write('\n')
+
     cm = confusion_matrix(label_list, pred_list)
     plt.figure(figsize=(10, 8))
+    params = [
+        f"Style: {opt.style}, "
+        f"Prompt: {opt.prompt}, use_np: {opt.negative_p}, "
+        f"bg: {opt.bg_color}, "
+        f"AIGC: {f'T {opt.aigc_dsc}' if comfyui else 'None'}, "
+        f"IARM: {opt.iarm}, "
+        f"Img/input: {opt.num_per_input}"
+    ]
+    params_text = '\n'.join(params)
     plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.title(f'Confusion Matrix, accuracy {acc:.4f}')
+    plt.title(f'Confusion Matrix, acc {acc:.4f}, {output_name}')
     plt.colorbar()
     plt.xticks(np.arange(len(test_class)), test_class, rotation=45)
     y_labels = []
     for i, name in enumerate(test_class):
         y_labels.append(name + f'\n{per_accuracy[i]:.4f}')
     plt.yticks(np.arange(len(test_class)), y_labels)
-    plt.xlabel('Predicted Label')
+    plt.xlabel('Predicted Label\n' + params_text)
     plt.ylabel('True Label')
     for i in range(len(test_class)):
         for j in range(len(test_class)):
             plt.text(j, i, cm[i, j], ha='center', va='center', color='white' if cm[i, j] > cm.max() / 2 else 'black')
+
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'result.png'))
+    plt.savefig(join(output_dir, output_name + '.png'))
+    plt.savefig(join(opt.data_dir, 'results', 'plots', output_name + '.png'))
     plt.show()
 
-    with open(os.path.join(output_dir, 'parameters.json'), 'w') as f:
+    with open(join(output_dir, 'parameters.json'), 'w') as f:
         params = vars(opt)
         params['finish time'] = time.strftime('%m-%d_%H-%M-%S')
         json.dump(vars(opt), f, indent=4)
@@ -304,7 +346,7 @@ def main():
 
     parser.add_argument("--data_dir", type=str, default=join('datasets', 'ModelNet10'), help="dataset directory")
     parser.add_argument("--style", type=str, default='depth', help="render, depth, normal or edge")
-    parser.add_argument("--bg_color", type=str, default='black', help="black or white")
+    parser.add_argument("--bg_color", type=str, nargs='+', default='black', help="black, white, or both (averaged)")
     parser.add_argument("--prompt", type=str, default='@', help="prompt, @ is the placeholder for class name")
     parser.add_argument("--phi_1", type=float, default=60, help="angle for rotation")
     parser.add_argument("--phi_2", type=float, default=210, help="angle for rotation")
@@ -316,8 +358,10 @@ def main():
     parser.add_argument("--step_reduce", type=float, default=1, help="distance from camera")
 
     parser.add_argument('--num_per_input', type=int, default=1, help='number of generated images per input')
+    parser.add_argument('--specific_input', type=int, nargs='+', default=None, help='specific input images to use')
     parser.add_argument('--resolution', type=int, default=512, help='image resolution')
     parser.add_argument('--aigc_dsc', type=str, default='', help='AIGC description')
+    parser.add_argument('--negative_p', type=bool, default=False, help='whether to use negative prompt')
 
     parser.add_argument('--comment', type=str, default='', help='comments for the run')
     opt = parser.parse_args()
@@ -338,23 +382,40 @@ def main():
 
     comfyui = Comfyui(workflow='controlnet')
 
-    opt.style = styles[3]
-    opt.comment = 'normal map masked'
-    # opt.aigc_dsc = 'canny'
-    opt.prompt = prompt_list[10]
-    run(opt, comfyui=comfyui)
+    opt.prompt = 'one standalone @'
 
-    for st in ['canny', 'scribble']:
-        opt.aigc_dsc = st
-        for p in ['one photo of one @', '@', 'one standalone @']:
-            opt.prompt = p
+    for style in ['normal', 'depth']:
+        opt.style = style
+        for i in [0, 1, 2]:
+            opt.specific_input = i
+            opt.comment = f'{style}_{i}_AIGC'
             run(opt, comfyui=comfyui)
 
-    for s in ['depth', 'normal']:
-        opt.style = s
-        opt.num_per_input = 3
-        opt.prompt = 'one photo of a standalone @'
-        run(opt, comfyui=comfyui)
+    opt.bg_color = ['black', 'white']
+    opt.specific_input = [0, 1, 2]
+    opt.comment = f'{style}_3in*2bg average_AIGC'
+    run(opt, comfyui=comfyui)
+
+    opt.bg_color = 'black'
+    for style in ['normal', 'depth']:
+        opt.style = style
+        opt.specific_input = i
+        opt.comment = f'{style}_{i}_no AIGC'
+        run(opt, comfyui=None)
+
+    opt.negative_p = True
+
+    for style in ['normal', 'depth']:
+        opt.style = style
+        for i in [0, 1, 2]:
+            opt.specific_input = i
+            opt.comment = f'{style}_{i}_AIGC_np'
+            run(opt, comfyui=comfyui)
+
+    opt.bg_color = ['black', 'white']
+    opt.specific_input = [0, 1, 2]
+    opt.comment = f'{style}_3in*2bg average_AIGC_np'
+    run(opt, comfyui=comfyui)
 
 
 if __name__ == "__main__":
